@@ -15,10 +15,20 @@ from pydantic import BaseModel
 from dslc.compiler import compile_flowql
 from dslc.ai import explain_error, review_code
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title="FlowQL Studio",
     description="Mini Compiler & AI Assistant for Tabular Data DSL",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Request Models
@@ -120,7 +130,7 @@ async def api_examples():
     return {"examples": examples_list}
 
 
-# Mount web directory as static root for Single-Page Application
-web_dir = Path(__file__).parent / "web"
-web_dir.mkdir(exist_ok=True)
-app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="static")
+# Mount web directory as static root for Single-Page Application (local dev & fallback)
+web_dir = Path(__file__).resolve().parent / "web"
+if web_dir.exists():
+    app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="static")
