@@ -1,0 +1,6 @@
+# Semantic Error: E104 (Type mismatch in expression)
+# Comparing 'region' (type: str) with numeric literal 10 (type: num)
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+invalid = sales
+    | filter region > 10;
+print invalid;

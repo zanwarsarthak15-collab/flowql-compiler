@@ -1,0 +1,4 @@
+# Syntax Error 2: Missing semicolon at end of dataset declaration statement (E010)
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv"
+let threshold = 100;
+print sales;

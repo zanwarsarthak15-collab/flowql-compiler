@@ -1,0 +1,24 @@
+# Environment secrets
+.env
+
+# Virtual environment
+venv/
+env/
+
+# Python cache & compiler tables
+__pycache__/
+*.py[cod]
+*$py.class
+parsetab.py
+lextab.py
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

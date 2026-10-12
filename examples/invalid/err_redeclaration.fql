@@ -1,0 +1,4 @@
+# E102: Redeclaration of a name
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+let sales = 50;
+print sales;

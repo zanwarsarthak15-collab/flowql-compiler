@@ -1,0 +1,4 @@
+# Syntax Error 3: Unexpected token in pipeline stage declaration (E010)
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | select region, | limit 5;
+print bad;

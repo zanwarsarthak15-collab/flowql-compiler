@@ -1,0 +1,6 @@
+# Semantic Error: E106 (Non-numeric column in sum/avg aggregation)
+# Attempting to calculate 'sum product', where 'product' is of type 'str'
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+invalid = sales
+    | group region sum product;
+print invalid;

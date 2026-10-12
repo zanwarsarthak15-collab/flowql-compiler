@@ -1,0 +1,9 @@
+# Valid Example 4: Average transaction amount per region with scalar let arithmetic
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+let min_ticket = 25 * 2;
+regional_avg = sales
+    | filter amount > min_ticket
+    | group region avg amount
+    | sort avg_amount desc
+    | limit 3;
+print regional_avg;

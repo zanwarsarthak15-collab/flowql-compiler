@@ -1,0 +1,7 @@
+# Filter high-value products and sort in descending order
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+high_value = sales
+    | filter amount >= 300
+    | select product, amount, units
+    | sort amount desc;
+print high_value;

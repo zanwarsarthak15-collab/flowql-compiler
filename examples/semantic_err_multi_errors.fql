@@ -1,0 +1,7 @@
+# Semantic Error: Demonstrating multiple errors captured in one run
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+invalid = sales
+    | filter amount + 10
+    | select unknown_col1, unknown_col2
+    | limit 0;
+print invalid;

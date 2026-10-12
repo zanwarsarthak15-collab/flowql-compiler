@@ -1,0 +1,4 @@
+# E106: Cannot perform sum or avg on non-numeric column
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | group region sum product;
+print bad;

@@ -1,0 +1,6 @@
+# Valid Example 3: Group by product and aggregate total units
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+summary = sales
+    | group product sum units
+    | sort sum_units desc;
+print summary;

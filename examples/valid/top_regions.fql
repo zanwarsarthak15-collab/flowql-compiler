@@ -1,0 +1,10 @@
+# Top performing sales by region with filtering and aggregation
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+let threshold = 100;
+top = sales
+    | filter amount > threshold and units >= 2
+    | select region, amount
+    | group region sum amount
+    | sort sum_amount desc
+    | limit 5;
+print top;

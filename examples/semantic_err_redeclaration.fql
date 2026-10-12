@@ -1,0 +1,5 @@
+# Semantic Error: E102 (Redeclaration of a name)
+# 'sales' is declared as a dataset, then redeclared as a scalar variable
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+let sales = 50;
+print sales;

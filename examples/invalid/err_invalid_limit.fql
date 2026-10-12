@@ -1,0 +1,4 @@
+# E107: Limit value must be a positive integer
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | limit 0;
+print bad;

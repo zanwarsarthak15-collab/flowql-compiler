@@ -1,0 +1,6 @@
+# Count number of recorded sales transactions per region
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+counts = sales
+    | group region count product
+    | sort count_product desc;
+print counts;

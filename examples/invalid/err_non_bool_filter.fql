@@ -1,0 +1,4 @@
+# E105: Filter expression is not boolean
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | filter amount + 10;
+print bad;

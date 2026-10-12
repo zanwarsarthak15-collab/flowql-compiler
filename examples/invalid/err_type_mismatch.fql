@@ -1,0 +1,4 @@
+# E104: Type mismatch in expression (comparing string with number)
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | filter region > 5;
+print bad;

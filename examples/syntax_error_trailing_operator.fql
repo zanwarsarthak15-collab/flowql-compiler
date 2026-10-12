@@ -1,0 +1,4 @@
+# Syntax Error 1: Trailing comparison operator missing right-hand operand (E010)
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | filter amount > ;
+print bad;

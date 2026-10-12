@@ -1,0 +1,6 @@
+# Semantic Error: E103 (Unknown column for the current schema)
+# Selecting 'customer_id' and 'price' which do not exist in the declared sales schema
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+top = sales
+    | select customer_id, price;
+print top;

@@ -1,0 +1,5 @@
+# Semantic Error: E101 (Use of undefined table or variable)
+# 'raw_data' has not been declared with 'dataset' or pipeline assignment
+summary = raw_data
+    | limit 5;
+print summary;

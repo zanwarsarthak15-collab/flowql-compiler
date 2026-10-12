@@ -1,0 +1,4 @@
+# E103: Unknown column for current schema
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+bad = sales | select nonexistent_column;
+print bad;

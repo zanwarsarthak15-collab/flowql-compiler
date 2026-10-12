@@ -1,0 +1,4 @@
+# E010: Unexpected token (syntax error)
+dataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";
+top = sales | filter amount > ;
+print top;
