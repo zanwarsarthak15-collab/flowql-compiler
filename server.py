@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -130,7 +131,19 @@ async def api_examples():
     return {"examples": examples_list}
 
 
-# Mount web directory as static root for Single-Page Application (local dev & fallback)
-web_dir = Path(__file__).resolve().parent / "web"
-if web_dir.exists():
-    app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="static")
+@app.get("/")
+async def serve_index():
+    """Serve the frontend SPA. Works both locally (web/) and on Vercel (public/)."""
+    for candidate in ["public", "web"]:
+        html_path = Path(__file__).resolve().parent / candidate / "index.html"
+        if html_path.exists():
+            return FileResponse(str(html_path))
+    return {"status": "FlowQL API running — frontend not found"}
+
+
+# Mount static files for local dev (StaticFiles at / serves CSS/JS; explicit GET / above takes priority)
+for static_dir_name in ["public", "web"]:
+    static_dir = Path(__file__).resolve().parent / static_dir_name
+    if static_dir.exists():
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        break

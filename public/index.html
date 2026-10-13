@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlowQL Studio & Compiler</title>
+  
+  <!-- Google Fonts & Material Symbols -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  
+  <!-- CodeMirror CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  
+  <!-- Custom Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Navigation Bar -->
+    <header class="app-bar">
+      <div class="app-bar-brand">
+        <div class="logo-icon">
+          <span class="material-symbols-outlined">data_object</span>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">FlowQL</span>
+          <span class="brand-badge">Mini Compiler</span>
+        </div>
+      </div>
+
+      <div class="app-bar-center">
+        <div class="example-selector-wrapper">
+          <span class="material-symbols-outlined input-icon">description</span>
+          <select id="exampleSelect" class="md-select" title="Choose an example program">
+            <option value="" disabled selected>Select an Example Program...</option>
+            <!-- Populated dynamically via /api/examples -->
+          </select>
+        </div>
+      </div>
+
+      <div class="app-bar-actions">
+        <!-- Target Language Segmented Button -->
+        <div class="segmented-control" role="group" aria-label="Target Language">
+          <button type="button" class="segment-btn active" data-target="python">
+            <span class="segment-label">Python (pandas)</span>
+          </button>
+          <button type="button" class="segment-btn" data-target="sql">
+            <span class="segment-label">SQL (CTEs)</span>
+          </button>
+        </div>
+
+        <!-- AI Review Trigger Button -->
+        <button id="btnAiReview" class="btn btn-tonal" title="Request Google Gemini code review">
+          <span class="material-symbols-outlined">auto_awesome</span>
+          <span>AI Review</span>
+        </button>
+
+        <!-- Compile Button -->
+        <button id="btnCompile" class="btn btn-primary" title="Compile FlowQL (Ctrl + Enter)">
+          <span class="material-symbols-outlined">play_arrow</span>
+          <span>Compile</span>
+          <kbd class="shortcut-hint">Ctrl+↵</kbd>
+        </button>
+
+        <!-- Theme Toggle -->
+        <button id="btnThemeToggle" class="btn-icon" title="Toggle Light/Dark Theme" aria-label="Toggle theme">
+          <span class="material-symbols-outlined" id="themeIcon">dark_mode</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace-container">
+      <!-- Left Column: Source Editor & Error Panel -->
+      <section class="pane left-pane">
+        <div class="md-card editor-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="material-symbols-outlined card-header-icon">code</span>
+              <span class="card-title">FlowQL Pipeline Source</span>
+            </div>
+            <div class="card-actions">
+              <span id="cursorPos" class="cursor-indicator">Ln 1, Col 1</span>
+              <button id="btnClearEditor" class="btn-text" title="Clear Editor">Clear</button>
+            </div>
+          </div>
+
+          <!-- CodeMirror Editor Container -->
+          <div class="editor-wrapper">
+            <textarea id="codeEditor"></textarea>
+          </div>
+        </div>
+
+        <!-- Collapsible Diagnostics & Error Panel -->
+        <div id="diagnosticsCard" class="md-card diagnostics-card">
+          <div id="diagnosticsHeader" class="card-header clickable">
+            <div class="card-title-group">
+              <span class="material-symbols-outlined diagnostics-icon" id="diagnosticsStatusIcon">check_circle</span>
+              <span class="card-title" id="diagnosticsTitle">Diagnostics: Clean</span>
+              <span id="diagnosticsCountBadge" class="badge badge-success">0 Errors</span>
+            </div>
+            <span class="material-symbols-outlined chevron-icon" id="diagnosticsChevron">expand_more</span>
+          </div>
+
+          <div id="diagnosticsBody" class="diagnostics-content">
+            <div id="diagnosticsList" class="diagnostics-list">
+              <!-- Error rows rendered here -->
+            </div>
+
+            <!-- AI Error Explanation Container -->
+            <div id="aiExplanationContainer" class="ai-explanation-card hidden">
+              <div class="ai-header">
+                <div class="ai-title-wrap">
+                  <span class="material-symbols-outlined ai-sparkle-icon">psychology</span>
+                  <span class="ai-title">Gemini AI Diagnostic</span>
+                </div>
+                <button id="btnCloseAiExplain" class="btn-icon-sm" title="Dismiss">
+                  <span class="material-symbols-outlined">close</span>
+                </button>
+              </div>
+              <div class="ai-body">
+                <div class="ai-section">
+                  <span class="ai-label">Root Cause:</span>
+                  <p id="aiCauseText" class="ai-text"></p>
+                </div>
+                <div id="aiSnippetSection" class="ai-section hidden">
+                  <span class="ai-label">Suggested Code:</span>
+                  <pre id="aiSuggestedCode" class="code-preview"></pre>
+                  <button id="btnApplyFix" class="btn btn-sm btn-tonal">
+                    <span class="material-symbols-outlined">auto_fix_high</span>
+                    <span>Apply Fix to Editor</span>
+                  </button>
+                </div>
+                <div class="ai-section ai-tip-section">
+                  <span class="ai-label">Compiler Tip:</span>
+                  <p id="aiTipText" class="ai-tip-text"></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Compilation Artifacts Tabbed Panel -->
+      <section class="pane right-pane">
+        <div class="md-card output-card">
+          <!-- Card Header & Navigation Tabs -->
+          <div class="card-header tab-header">
+            <nav class="md-tabs" role="tablist">
+              <button class="tab-btn active" data-tab="tab-output" role="tab">
+                <span class="material-symbols-outlined tab-icon">terminal</span>
+                <span>Output Code</span>
+              </button>
+              <button class="tab-btn" data-tab="tab-tokens" role="tab">
+                <span class="material-symbols-outlined tab-icon">token</span>
+                <span>Tokens</span>
+              </button>
+              <button class="tab-btn" data-tab="tab-ast" role="tab">
+                <span class="material-symbols-outlined tab-icon">account_tree</span>
+                <span>AST</span>
+              </button>
+              <button class="tab-btn" data-tab="tab-ir" role="tab">
+                <span class="material-symbols-outlined tab-icon">alt_route</span>
+                <span>IR Steps</span>
+              </button>
+            </nav>
+
+            <div class="output-actions">
+              <button id="btnCopyOutput" class="btn-icon" title="Copy Output to Clipboard">
+                <span class="material-symbols-outlined">content_copy</span>
+              </button>
+              <button id="btnDownloadOutput" class="btn-icon" title="Download Output File">
+                <span class="material-symbols-outlined">download</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tab Content Views -->
+          <div class="output-viewport">
+            <!-- Loading Skeleton Shimmer -->
+            <div id="loadingShimmer" class="shimmer-container hidden">
+              <div class="shimmer-line line-lg"></div>
+              <div class="shimmer-line line-md"></div>
+              <div class="shimmer-line line-sm"></div>
+              <div class="shimmer-line line-lg"></div>
+              <div class="shimmer-line line-md"></div>
+            </div>
+
+            <!-- Tab 1: Generated Code -->
+            <div id="tab-output" class="tab-pane active">
+              <!-- AI Code Review Container (if triggered) -->
+              <div id="aiReviewCard" class="ai-review-banner hidden">
+                <div class="ai-review-header">
+                  <span class="material-symbols-outlined sparkle">auto_awesome</span>
+                  <span class="title">Gemini Code Review</span>
+                  <button id="btnCloseAiReview" class="btn-icon-sm">
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+                <div class="ai-review-body">
+                  <p id="aiReviewVerdict" class="review-verdict"></p>
+                  <ul id="aiReviewTips" class="review-tips"></ul>
+                </div>
+              </div>
+
+              <!-- Optimization Notes Banner -->
+              <div id="optNotesBanner" class="opt-banner hidden">
+                <span class="material-symbols-outlined opt-icon">bolt</span>
+                <span id="optNotesText"></span>
+              </div>
+
+              <pre id="outputCodePre" class="code-display"><code id="outputCode"></code></pre>
+            </div>
+
+            <!-- Tab 2: Tokens View -->
+            <div id="tab-tokens" class="tab-pane">
+              <div class="table-responsive">
+                <table class="md-table" id="tokensTable">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Token Type</th>
+                      <th>Value</th>
+                      <th>Line</th>
+                      <th>Col</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tokensTableBody">
+                    <!-- Token rows -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Tab 3: AST View -->
+            <div id="tab-ast" class="tab-pane">
+              <div class="ast-controls">
+                <button id="btnToggleAstFormat" class="btn-text-sm">Switch to JSON</button>
+              </div>
+              <pre id="astDisplay" class="tree-display"></pre>
+            </div>
+
+            <!-- Tab 4: IR Steps View -->
+            <div id="tab-ir" class="tab-pane">
+              <div id="irStepsList" class="ir-steps-container">
+                <!-- Visual IR cards -->
+              </div>
+            </div>
+
+            <!-- Empty State Display -->
+            <div id="emptyState" class="empty-state">
+              <div class="empty-state-icon">
+                <span class="material-symbols-outlined">flowsheet</span>
+              </div>
+              <h3>FlowQL Compiler Ready</h3>
+              <p>Type a data pipeline on the left or select an example above to begin compilation.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Global Toast / Snackbar -->
+    <div id="snackbar" class="snackbar" role="status" aria-live="polite">
+      <span class="material-symbols-outlined snackbar-icon" id="snackbarIcon">check_circle</span>
+      <span id="snackbarMessage" class="snackbar-text">Notification</span>
+    </div>
+  </div>
+
+  <!-- CodeMirror Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/simple.min.js"></script>
+
+  <!-- Application Script -->
+  <script src="app.js?v=2"></script>
+</body>
+</html>
