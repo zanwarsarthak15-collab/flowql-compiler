@@ -36,6 +36,7 @@ from dslc.errors import (
     E106_NON_NUMERIC_AGG,
     E107_INVALID_LIMIT,
     E108_INVALID_PRINT,
+    E109_CSV_SCHEMA_MISMATCH,
 )
 
 
@@ -44,9 +45,10 @@ class SemanticAnalyzer:
     Maintains symbol tables and validates schemas across all FlowQL statements.
     """
 
-    def __init__(self, source_code: str = ""):
+    def __init__(self, source_code: str = "", csv_schemas: Optional[Dict[str, List[str]]] = None):
         self.source_code = source_code
         self.source_lines = source_code.splitlines() if source_code else []
+        self.csv_schemas = csv_schemas or {}  # dataset_name / filename -> [col1, col2]
         self.variables: Dict[str, str] = {}  # var_name -> type ('num', 'str', 'bool')
         self.tables: Dict[str, Dict[str, str]] = {}  # table_name -> {col_name: col_type}
         self.errors: List[CompileError] = []
@@ -100,6 +102,25 @@ class SemanticAnalyzer:
         for col in stmt.columns:
             schema[col.name] = col.col_type
         self.tables[stmt.name] = schema
+
+        # Check against actual CSV schema if available
+        if self.csv_schemas:
+            filename_only = stmt.path.replace("\\", "/").split("/")[-1]
+            available_cols = (
+                self.csv_schemas.get(stmt.name)
+                or self.csv_schemas.get(stmt.path)
+                or self.csv_schemas.get(filename_only)
+            )
+            if available_cols is not None:
+                norm_avail = {c.strip().lower() for c in available_cols}
+                for col in stmt.columns:
+                    if col.name.strip().lower() not in norm_avail:
+                        self._add_error(
+                            E109_CSV_SCHEMA_MISMATCH,
+                            f"Declared column '{col.name}' not found in CSV '{stmt.path}'. Available columns: {', '.join(available_cols)}",
+                            col.line,
+                            col.column
+                        )
 
     def _visit_let_stmt(self, stmt: LetStmt):
         # E102: Check redeclaration

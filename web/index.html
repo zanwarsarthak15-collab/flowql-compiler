@@ -76,6 +76,112 @@
     <main class="workspace-container">
       <!-- Left Column: Source Editor & Error Panel -->
       <section class="pane left-pane">
+        <!-- CSV Dataset Upload & Schema Preview Card -->
+        <div id="csvUploadCard" class="md-card csv-card">
+          <div id="csvCardHeader" class="card-header clickable">
+            <div class="card-title-group">
+              <span class="material-symbols-outlined card-header-icon" id="csvStatusIcon">table_chart</span>
+              <span class="card-title">Dataset Source (CSV)</span>
+              <span id="csvFileBadge" class="badge badge-neutral">No CSV Loaded</span>
+            </div>
+            <div class="card-actions">
+              <button type="button" id="btnBrowseTrigger" class="btn btn-sm btn-tonal" title="Upload new CSV file">
+                <span class="material-symbols-outlined" style="font-size: 16px;">upload_file</span>
+                <span>Upload CSV</span>
+              </button>
+              <span class="material-symbols-outlined chevron-icon" id="csvChevron">expand_more</span>
+            </div>
+          </div>
+
+          <div id="csvCardBody" class="csv-card-content">
+            <!-- Hidden File Input -->
+            <input type="file" id="csvFileInput" accept=".csv" style="display: none;" />
+
+            <!-- Drop Zone (shown when no file is active or in replace mode) -->
+            <div id="csvDropZone" class="csv-dropzone">
+              <div class="dropzone-icon-wrap">
+                <span class="material-symbols-outlined dropzone-icon">cloud_upload</span>
+              </div>
+              <div class="dropzone-text">
+                <span class="dropzone-title">Drag & drop your CSV file here</span>
+                <span class="dropzone-subtitle">or <label for="csvFileInput" class="dropzone-link">browse from your computer</label> (max 10 MB)</span>
+              </div>
+            </div>
+
+            <!-- Upload Loading Indicator -->
+            <div id="csvUploadProgress" class="csv-progress-wrap hidden">
+              <div class="progress-spinner"></div>
+              <span id="csvProgressText" class="progress-text">Uploading and analyzing CSV schema...</span>
+            </div>
+
+            <!-- Upload Error Banner -->
+            <div id="csvErrorBanner" class="csv-alert csv-alert-error hidden">
+              <span class="material-symbols-outlined alert-icon">error_outline</span>
+              <span id="csvErrorMsg" class="alert-message">Error message</span>
+              <button type="button" id="btnDismissCsvError" class="btn-icon-sm" title="Dismiss">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <!-- Uploaded Dataset Active Details -->
+            <div id="csvActivePanel" class="csv-active-panel hidden">
+              <!-- File Details & Meta Bar -->
+              <div class="csv-file-bar">
+                <div class="csv-meta-item">
+                  <span class="material-symbols-outlined meta-icon">description</span>
+                  <span id="csvMetaFilename" class="meta-filename">filename.csv</span>
+                  <span id="csvMetaSize" class="meta-badge">0 KB</span>
+                  <span id="csvMetaRows" class="meta-badge">0 rows</span>
+                </div>
+                <div class="csv-file-actions">
+                  <button type="button" id="btnReplaceCsv" class="btn-icon-sm" title="Replace file">
+                    <span class="material-symbols-outlined">swap_horiz</span>
+                  </button>
+                  <button type="button" id="btnRemoveCsv" class="btn-icon-sm btn-icon-danger" title="Remove file">
+                    <span class="material-symbols-outlined">delete_outline</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Schema Review & Type Editor -->
+              <div class="csv-schema-section">
+                <div class="section-title-wrap">
+                  <span class="section-title">Detected Schema</span>
+                  <span class="section-hint">Review or adjust column types:</span>
+                </div>
+                <div id="csvSchemaGrid" class="csv-schema-grid">
+                  <!-- Schema items dynamically populated -->
+                </div>
+              </div>
+
+              <!-- Action Bar to Insert into FlowQL -->
+              <div class="csv-insert-actions">
+                <button type="button" id="btnUseInFlowql" class="btn btn-primary btn-sm" title="Insert dataset declaration into FlowQL editor">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">add_circle</span>
+                  <span>Use in FlowQL</span>
+                </button>
+                <button type="button" id="btnTogglePreview" class="btn-text-sm" title="Toggle data rows preview">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
+                  <span id="previewToggleText">Show Data Preview</span>
+                </button>
+              </div>
+
+              <!-- First 5-10 Rows Preview Table (collapsible) -->
+              <div id="csvPreviewSection" class="csv-preview-section hidden">
+                <div class="preview-table-header">
+                  <span class="preview-table-title">First 10 Data Rows Preview</span>
+                </div>
+                <div class="table-responsive preview-table-wrap">
+                  <table class="md-table preview-table" id="csvPreviewTable">
+                    <thead id="csvPreviewThead"></thead>
+                    <tbody id="csvPreviewTbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="md-card editor-card">
           <div class="card-header">
             <div class="card-title-group">

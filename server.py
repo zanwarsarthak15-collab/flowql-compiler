@@ -8,13 +8,14 @@ Single execution command: uvicorn server:app --reload
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from dslc.compiler import compile_flowql
 from dslc.ai import explain_error, review_code
+from dslc.csv_utils import CSVUploadManager
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -32,11 +33,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Shared upload manager instance
+upload_manager = CSVUploadManager()
+
 # Request Models
 class CompileRequest(BaseModel):
     source: str
     target: str = "python"
     optimize: bool = True
+    upload_id: Optional[str] = None
+    file_mappings: Optional[Dict[str, str]] = None
 
 
 class ExplainRequest(BaseModel):
@@ -56,16 +62,78 @@ async def health_check():
     return {"status": "ok", "service": "FlowQL"}
 
 
+@app.post("/api/upload-csv")
+async def api_upload_csv(file: UploadFile = File(...)):
+    """
+    Accepts a multipart CSV file upload:
+    - Enforces .csv extension
+    - Enforces maximum file size limit (10 MB)
+    - Validates CSV structure, detects columns, and infers FlowQL types (num, str, bool)
+    - Generates sanitized identifiers and preview rows
+    - Stores file securely in data/uploads/ with unique upload_id
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename missing from upload request.")
+
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only CSV files (.csv) are supported. Received '{file.filename}'."
+        )
+
+    try:
+        content = await file.read()
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail="File size exceeds maximum allowed limit of 10 MB."
+            )
+
+        meta = upload_manager.save_upload(content, file.filename)
+        # Never expose internal filesystem paths to the client
+        safe_meta = {k: v for k, v in meta.items() if k != "stored_path"}
+        return safe_meta
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process uploaded CSV: {str(e)}")
+
+
+@app.delete("/api/upload-csv/{upload_id}")
+async def api_delete_upload(upload_id: str):
+    """Safely removes an uploaded file by its unique upload ID."""
+    success = upload_manager.delete_upload(upload_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Upload ID not found or already removed.")
+    return {"success": True, "message": "Uploaded file removed successfully."}
+
+
+@app.get("/api/uploads")
+async def api_list_uploads():
+    """Returns list of currently active uploaded datasets without internal file paths."""
+    return {
+        "uploads": [
+            {k: v for k, v in m.items() if k != "stored_path"}
+            for m in upload_manager.registry.values()
+        ]
+    }
+
+
 @app.post("/api/compile")
 async def api_compile(req: CompileRequest):
     """
     Runs full compiler pipeline: Lexer -> Parser -> Semantic -> IR -> Optimizer -> CodeGen.
-    Returns tokens, AST, IR, generated target code, and any diagnostics.
+    Supports resolving uploaded CSV datasets via upload_id or file_mappings.
     """
     res = compile_flowql(
         source=req.source,
         target=req.target,
-        optimize=req.optimize
+        optimize=req.optimize,
+        upload_id=req.upload_id,
+        file_mappings=req.file_mappings,
+        upload_manager=upload_manager
     )
     # Ensure generated_code is explicitly present alongside target_code
     res["generated_code"] = res.get("target_code", "")

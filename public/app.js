@@ -11,6 +11,35 @@ document.addEventListener("DOMContentLoaded", () => {
   let astViewMode = "tree"; // "tree" or "json"
   let compileDebounceTimer = null;
   let activeErrorMarkers = [];
+  let activeUpload = null;
+
+  // CSV Upload DOM
+  const csvUploadCard = document.getElementById("csvUploadCard");
+  const csvCardHeader = document.getElementById("csvCardHeader");
+  const csvStatusIcon = document.getElementById("csvStatusIcon");
+  const csvFileBadge = document.getElementById("csvFileBadge");
+  const btnBrowseTrigger = document.getElementById("btnBrowseTrigger");
+  const csvChevron = document.getElementById("csvChevron");
+  const csvFileInput = document.getElementById("csvFileInput");
+  const csvDropZone = document.getElementById("csvDropZone");
+  const csvUploadProgress = document.getElementById("csvUploadProgress");
+  const csvProgressText = document.getElementById("csvProgressText");
+  const csvErrorBanner = document.getElementById("csvErrorBanner");
+  const csvErrorMsg = document.getElementById("csvErrorMsg");
+  const btnDismissCsvError = document.getElementById("btnDismissCsvError");
+  const csvActivePanel = document.getElementById("csvActivePanel");
+  const csvMetaFilename = document.getElementById("csvMetaFilename");
+  const csvMetaSize = document.getElementById("csvMetaSize");
+  const csvMetaRows = document.getElementById("csvMetaRows");
+  const btnReplaceCsv = document.getElementById("btnReplaceCsv");
+  const btnRemoveCsv = document.getElementById("btnRemoveCsv");
+  const csvSchemaGrid = document.getElementById("csvSchemaGrid");
+  const btnUseInFlowql = document.getElementById("btnUseInFlowql");
+  const btnTogglePreview = document.getElementById("btnTogglePreview");
+  const previewToggleText = document.getElementById("previewToggleText");
+  const csvPreviewSection = document.getElementById("csvPreviewSection");
+  const csvPreviewThead = document.getElementById("csvPreviewThead");
+  const csvPreviewTbody = document.getElementById("csvPreviewTbody");
 
   // DOM Elements
   const codeEditorEl = document.getElementById("codeEditor");
@@ -518,7 +547,8 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({
           source: source,
           target: currentTarget,
-          optimize: true
+          optimize: true,
+          upload_id: activeUpload ? activeUpload.upload_id : null
         })
       });
 
@@ -668,6 +698,288 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // =========================================================================
+  // 13. CSV Dataset Upload Component Logic
+  // =========================================================================
+  function initCsvUpload() {
+    if (!csvUploadCard) return;
+
+    // Browse Button triggers file input
+    btnBrowseTrigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      csvFileInput.click();
+    });
+
+    // File input change
+    csvFileInput.addEventListener("change", (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) uploadCsvFile(file);
+    });
+
+    // Replace button
+    btnReplaceCsv.addEventListener("click", () => {
+      csvFileInput.click();
+    });
+
+    // Remove button
+    btnRemoveCsv.addEventListener("click", () => {
+      removeActiveUpload();
+    });
+
+    // Dismiss error button
+    btnDismissCsvError.addEventListener("click", () => {
+      csvErrorBanner.classList.add("hidden");
+    });
+
+    // Toggle Preview table
+    btnTogglePreview.addEventListener("click", () => {
+      const isHidden = csvPreviewSection.classList.contains("hidden");
+      if (isHidden) {
+        csvPreviewSection.classList.remove("hidden");
+        previewToggleText.textContent = "Hide Data Preview";
+      } else {
+        csvPreviewSection.classList.add("hidden");
+        previewToggleText.textContent = "Show Data Preview";
+      }
+    });
+
+    // "Use in FlowQL" button
+    btnUseInFlowql.addEventListener("click", () => {
+      insertDatasetIntoEditor();
+    });
+
+    // Drag and Drop support
+    ["dragenter", "dragover"].forEach((evtName) => {
+      csvDropZone.addEventListener(evtName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        csvDropZone.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((evtName) => {
+      csvDropZone.addEventListener(evtName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        csvDropZone.classList.remove("dragover");
+      });
+    });
+
+    csvDropZone.addEventListener("drop", (e) => {
+      const dt = e.dataTransfer;
+      const file = dt && dt.files && dt.files[0];
+      if (file) {
+        uploadCsvFile(file);
+      }
+    });
+
+    // Card header collapsible toggle
+    csvCardHeader.addEventListener("click", (e) => {
+      if (e.target.closest("#btnBrowseTrigger") || e.target.closest("#btnReplaceCsv") || e.target.closest("#btnRemoveCsv")) return;
+      csvUploadCard.classList.toggle("collapsed");
+      const isCollapsed = csvUploadCard.classList.contains("collapsed");
+      csvChevron.textContent = isCollapsed ? "expand_less" : "expand_more";
+    });
+  }
+
+  function showCsvError(msg) {
+    csvErrorMsg.textContent = msg;
+    csvErrorBanner.classList.remove("hidden");
+    csvUploadProgress.classList.add("hidden");
+    csvDropZone.classList.remove("hidden");
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return "0 B";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+  }
+
+  async function uploadCsvFile(file) {
+    csvErrorBanner.classList.add("hidden");
+
+    // Client-side validations
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      showCsvError(`'${file.name}' is not a CSV file. Only .csv files are supported.`);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      showCsvError(`File size (${formatBytes(file.size)}) exceeds the maximum allowed limit of 10 MB.`);
+      return;
+    }
+
+    // Show loading
+    csvDropZone.classList.add("hidden");
+    csvActivePanel.classList.add("hidden");
+    csvUploadProgress.classList.remove("hidden");
+    csvProgressText.textContent = `Uploading and analyzing '${file.name}'...`;
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload-csv", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || `Upload failed with status ${res.status}`);
+      }
+
+      // Success
+      setActiveUpload(data);
+      showSnackbar(`Uploaded ${data.filename} (${data.columns.length} columns, ${data.total_rows} rows)`, "check_circle");
+    } catch (err) {
+      showCsvError(err.message || "Failed to upload and parse CSV.");
+    } finally {
+      csvUploadProgress.classList.add("hidden");
+    }
+  }
+
+  function setActiveUpload(data) {
+    activeUpload = data;
+
+    // Update Header Badge
+    csvFileBadge.textContent = `${data.filename} (${data.total_rows} rows)`;
+    csvFileBadge.className = "badge badge-success";
+    csvStatusIcon.textContent = "check_circle";
+
+    // Update Meta Bar
+    csvMetaFilename.textContent = data.filename;
+    csvMetaSize.textContent = formatBytes(data.file_size);
+    csvMetaRows.textContent = `${data.total_rows} rows`;
+
+    // Render Schema Grid
+    renderSchemaGrid(data.columns);
+
+    // Render Preview Table
+    renderPreviewTable(data.columns, data.preview_rows);
+
+    // Switch panels
+    csvDropZone.classList.add("hidden");
+    csvActivePanel.classList.remove("hidden");
+  }
+
+  function renderSchemaGrid(columns) {
+    csvSchemaGrid.innerHTML = "";
+    (columns || []).forEach((col, idx) => {
+      const pill = document.createElement("div");
+      pill.className = "schema-col-pill";
+
+      // Column name input
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.className = "schema-col-name";
+      nameInput.value = col.name;
+      nameInput.title = `Original header: ${col.original_name}`;
+
+      // Type selector dropdown
+      const typeSelect = document.createElement("select");
+      typeSelect.className = `schema-col-type type-${col.type}`;
+      ["num", "str", "bool"].forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t;
+        opt.textContent = t;
+        if (t === col.type) opt.selected = true;
+        typeSelect.appendChild(opt);
+      });
+
+      typeSelect.addEventListener("change", () => {
+        typeSelect.className = `schema-col-type type-${typeSelect.value}`;
+      });
+
+      pill.appendChild(nameInput);
+      pill.appendChild(typeSelect);
+      csvSchemaGrid.appendChild(pill);
+    });
+  }
+
+  function renderPreviewTable(columns, previewRows) {
+    // Header
+    let theadHtml = "<tr><th>#</th>";
+    (columns || []).forEach((c) => {
+      theadHtml += `<th>${escapeHtml(c.name)} <span class="type-pill type-${c.type}">${c.type}</span></th>`;
+    });
+    theadHtml += "</tr>";
+    csvPreviewThead.innerHTML = theadHtml;
+
+    // Body
+    let tbodyHtml = "";
+    (previewRows || []).forEach((row, rIdx) => {
+      tbodyHtml += `<tr><td><strong>${rIdx + 1}</strong></td>`;
+      (columns || []).forEach((c) => {
+        const val = row[c.name] !== undefined ? row[c.name] : "";
+        tbodyHtml += `<td>${escapeHtml(String(val))}</td>`;
+      });
+      tbodyHtml += "</tr>";
+    });
+    csvPreviewTbody.innerHTML = tbodyHtml;
+  }
+
+  async function removeActiveUpload() {
+    if (activeUpload && activeUpload.upload_id) {
+      try {
+        await fetch(`/api/upload-csv/${activeUpload.upload_id}`, { method: "DELETE" });
+      } catch (e) {
+        console.warn("Could not delete from server:", e);
+      }
+    }
+    activeUpload = null;
+    csvFileInput.value = "";
+    csvActivePanel.classList.add("hidden");
+    csvPreviewSection.classList.add("hidden");
+    previewToggleText.textContent = "Show Data Preview";
+    csvDropZone.classList.remove("hidden");
+    csvFileBadge.textContent = "No CSV Loaded";
+    csvFileBadge.className = "badge badge-neutral";
+    csvStatusIcon.textContent = "table_chart";
+    showSnackbar("Removed uploaded CSV", "info");
+  }
+
+  function insertDatasetIntoEditor() {
+    if (!activeUpload) {
+      showSnackbar("No active uploaded CSV", "error");
+      return;
+    }
+
+    // Read current edited column names and types from the grid
+    const pills = csvSchemaGrid.querySelectorAll(".schema-col-pill");
+    const colParts = [];
+    pills.forEach((pill, idx) => {
+      const name = pill.querySelector(".schema-col-name").value.trim() || `col_${idx + 1}`;
+      const type = pill.querySelector(".schema-col-type").value;
+      colParts.push(`${name}: ${type}`);
+    });
+
+    const dsName = activeUpload.dataset_name || "dataset1";
+    const filename = activeUpload.filename || "data.csv";
+    const newDecl = `dataset ${dsName}(${colParts.join(", ")}) = load "${filename}";`;
+
+    const currentCode = getEditorCode();
+
+    // Check if editor already has a dataset declaration
+    const datasetRegex = /dataset\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*=\s*load\s+"[^"]*"\s*;/;
+
+    let updatedCode = "";
+    if (datasetRegex.test(currentCode)) {
+      // Replace existing dataset declaration
+      updatedCode = currentCode.replace(datasetRegex, newDecl);
+    } else if (!currentCode.trim()) {
+      // Starter pipeline template if editor is empty
+      updatedCode = `${newDecl}\n\n# FlowQL Pipeline\nsummary = ${dsName}\n    | limit 10;\nprint summary;\n`;
+    } else {
+      // Prepend to existing code
+      updatedCode = `${newDecl}\n\n${currentCode.trimStart()}`;
+    }
+
+    setEditorCode(updatedCode);
+    showSnackbar(`Inserted dataset '${dsName}' into editor`, "input");
+    compile(true);
+  }
+
   function escapeHtml(str) {
     if (!str) return "";
     return String(str)
@@ -681,5 +993,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initial Boot
   initTheme();
   initCodeMirror();
+  initCsvUpload();
   loadExamples();
 });
+
