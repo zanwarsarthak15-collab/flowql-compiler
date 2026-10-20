@@ -246,42 +246,92 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // 7. Load Built-in Examples
-  async function loadExamples() {
-    try {
-      const res = await fetch("/api/examples");
-      if (!res.ok) return;
-      const data = await res.json();
-      const examples = data.examples || [];
+  // 7. Load Built-in Examples (with offline/static GitHub Pages fallback)
+  const BUILTIN_EXAMPLES = [
+    {
+      id: "top_regions",
+      name: "Top Regions",
+      category: "Valid Pipelines",
+      code: `# Top performing sales by region with filtering and aggregation\ndataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";\nlet threshold = 100;\ntop = sales\n    | filter amount > threshold and units >= 2\n    | select region, amount\n    | group region sum amount\n    | sort sum_amount desc\n    | limit 5;\nprint top;`
+    },
+    {
+      id: "filter_and_sort",
+      name: "Filter And Sort",
+      category: "Valid Pipelines",
+      code: `# Filter sales above 50 and sort descending\ndataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";\nfiltered = sales\n    | filter amount > 50\n    | sort amount desc;\nprint filtered;`
+    },
+    {
+      id: "count_orders",
+      name: "Count Orders",
+      category: "Valid Pipelines",
+      code: `# Count total orders by region\ndataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";\norders = sales\n    | group region count amount;\nprint orders;`
+    },
+    {
+      id: "average_ticket",
+      name: "Average Ticket",
+      category: "Valid Pipelines",
+      code: `# Average purchase amount per product\ndataset sales(region: str, product: str, amount: num, units: num) = load "data/sales.csv";\navg_by_product = sales\n    | group product avg amount;\nprint avg_by_product;`
+    },
+    {
+      id: "err_undefined_table",
+      name: "Err Undefined Table",
+      category: "Error Cases",
+      code: `# Semantic Error: Undefined source table\nres = missing_table | limit 5;\nprint res;`
+    },
+    {
+      id: "err_unknown_column",
+      name: "Err Unknown Column",
+      category: "Error Cases",
+      code: `# Semantic Error: Non-existent column referenced\ndataset sales(region: str, amount: num) = load "sales.csv";\nres = sales | filter nonexistent_column > 10;\nprint res;`
+    },
+    {
+      id: "err_non_bool_filter",
+      name: "Err Non Bool Filter",
+      category: "Error Cases",
+      code: `# Semantic Error: Filter predicate must evaluate to boolean\ndataset sales(amount: num) = load "sales.csv";\nres = sales | filter amount + 10;\nprint res;`
+    }
+  ];
 
-      exampleSelect.innerHTML = `<option value="" disabled selected>Select an Example Program...</option>`;
-      const groups = {};
-      examples.forEach((ex) => {
-        if (!groups[ex.category]) groups[ex.category] = [];
-        groups[ex.category].push(ex);
+  function populateExamples(examples) {
+    if (!examples || !examples.length) return;
+    exampleSelect.innerHTML = `<option value="" disabled selected>Select an Example Program...</option>`;
+    const groups = {};
+    examples.forEach((ex) => {
+      if (!groups[ex.category]) groups[ex.category] = [];
+      groups[ex.category].push(ex);
+    });
+
+    for (const [cat, items] of Object.entries(groups)) {
+      const optgroup = document.createElement("optgroup");
+      optgroup.label = cat;
+      items.forEach((item) => {
+        const opt = document.createElement("option");
+        opt.value = item.id;
+        opt.textContent = item.name;
+        opt.dataset.code = item.code;
+        optgroup.appendChild(opt);
       });
+      exampleSelect.appendChild(optgroup);
+    }
 
-      for (const [cat, items] of Object.entries(groups)) {
-        const optgroup = document.createElement("optgroup");
-        optgroup.label = cat;
-        items.forEach((item) => {
-          const opt = document.createElement("option");
-          opt.value = item.id;
-          opt.textContent = item.name;
-          opt.dataset.code = item.code;
-          optgroup.appendChild(opt);
-        });
-        exampleSelect.appendChild(optgroup);
-      }
-
-      // Default load first valid example
+    if (!getEditorCode().trim()) {
       const defaultEx = examples.find((e) => e.id === "top_regions") || examples[0];
       if (defaultEx) {
         setEditorCode(defaultEx.code);
         compile(false);
       }
+    }
+  }
+
+  async function loadExamples() {
+    try {
+      const res = await fetch("/api/examples");
+      if (!res.ok) throw new Error("API not available");
+      const data = await res.json();
+      populateExamples(data.examples && data.examples.length ? data.examples : BUILTIN_EXAMPLES);
     } catch (e) {
-      console.warn("Failed to fetch examples:", e);
+      console.warn("Using embedded examples fallback:", e);
+      populateExamples(BUILTIN_EXAMPLES);
     }
   }
 

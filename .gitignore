@@ -25,3 +25,6 @@ Thumbs.db
 
 # Uploaded CSV data directory
 data/uploads/
+
+.vercel
+node_modules/

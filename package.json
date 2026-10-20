@@ -1,0 +1,12 @@
+{
+  "name": "flowql-compiler",
+  "version": "1.0.0",
+  "description": "FlowQL Studio & Compiler Web Application",
+  "type": "module",
+  "scripts": {
+    "tunnel": "node tunnel.js"
+  },
+  "dependencies": {
+    "localtunnel": "^2.0.2"
+  }
+}
