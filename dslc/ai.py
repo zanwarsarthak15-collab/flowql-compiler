@@ -8,7 +8,7 @@ or network fails, ensuring the core compiler never crashes.
 import os
 import json
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 
 # Load local .env if present
@@ -54,14 +54,59 @@ def _clean_json_response(raw_text: str) -> Optional[dict]:
     return None
 
 
+import time
+import concurrent.futures
+
+# Default timeout in seconds for Gemini API calls
+GEMINI_TIMEOUT_SECONDS = 8.0
+
+
+def _call_gemini_with_retry(prompt: str, timeout_seconds: float = GEMINI_TIMEOUT_SECONDS, max_retries: int = 1) -> Optional[str]:
+    """
+    Executes a Gemini API request with strict timeout and 1 automatic retry on temporary failures.
+    Returns the response text or raises an exception.
+    """
+    from google import genai
+
+    client = genai.Client(api_key=_get_api_key())
+    model_name = _get_model_name()
+
+    last_exception = None
+    for attempt in range(max_retries + 1):
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=prompt,
+                    config={"response_mime_type": "application/json"},
+                )
+                response = future.result(timeout=timeout_seconds)
+                return response.text if hasattr(response, "text") else ""
+        except concurrent.futures.TimeoutError:
+            last_exception = TimeoutError(f"Gemini API timed out after {timeout_seconds}s")
+            if attempt < max_retries:
+                time.sleep(0.5)
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries:
+                time.sleep(0.5)
+
+    if last_exception:
+        raise last_exception
+    return None
+
+
 def explain_error(
     error_dict: Dict[str, Any],
     source_code: str,
-    grammar_summary: str = ""
+    schema_info: Optional[List[Dict[str, Any]]] = None,
+    sample_rows: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
     Explains a FlowQL compile error in plain English and suggests a fix.
     Advisory only: returns friendly fallback if Gemini is offline or unconfigured.
+    Sends only minimal context: error, bounded source code, schema, and max 5 sample rows.
     """
     if not _is_api_key_valid():
         return {
@@ -72,9 +117,18 @@ def explain_error(
         }
 
     try:
-        from google import genai
+        # Bound source code size to avoid unnecessary token usage
+        bounded_source = source_code[:1200] if source_code else ""
 
-        client = genai.Client(api_key=_get_api_key())
+        # Build concise schema and sample context (at most 5 sample rows, never whole dataset)
+        schema_summary = ""
+        if schema_info:
+            cols_str = ", ".join([f"{c.get('name')}: {c.get('type')}" for c in schema_info[:15]])
+            schema_summary = f"\nDataset Columns: {cols_str}"
+
+        sample_summary = ""
+        if sample_rows:
+            sample_summary = f"\nSample Data (first {min(len(sample_rows), 5)} rows): {json.dumps(sample_rows[:5])}"
 
         prompt = f"""You are a helpful compiler teaching assistant for FlowQL, a college semester DSL project.
 A student received a compiler error. Explain the error simply and clearly.
@@ -82,50 +136,56 @@ A student received a compiler error. Explain the error simply and clearly.
 Error Code: {error_dict.get('code')}
 Message: {error_dict.get('message')}
 Line: {error_dict.get('line')}, Column: {error_dict.get('column')}
-Failing Line: {error_dict.get('source_line')}
+Failing Line: {error_dict.get('source_line')}{schema_summary}{sample_summary}
 
 Full Source Code:
 ```
-{source_code}
+{bounded_source}
 ```
 
 Instructions:
 1. Explain the root cause in 1-2 friendly, clear sentences (no jargon).
 2. Provide the corrected FlowQL code replacement in "suggested_code" (either the corrected single statement or the full corrected program).
 3. Provide one short tip to avoid this in the future.
-4. Output STRICT JSON only with keys "cause", "suggested_code", "tip". Do not wrap in markdown quotes if possible.
+4. Output STRICT JSON only with keys "cause", "suggested_code", "tip".
 """
 
-        response = client.models.generate_content(
-            model=_get_model_name(),
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
+        raw_text = _call_gemini_with_retry(prompt, timeout_seconds=GEMINI_TIMEOUT_SECONDS, max_retries=1)
+        parsed = _clean_json_response(raw_text or "")
 
-        parsed = _clean_json_response(response.text if hasattr(response, 'text') else "")
-        if parsed and "cause" in parsed:
-            return {
-                "available": True,
-                "cause": parsed.get("cause", ""),
-                "suggested_code": parsed.get("suggested_code", ""),
-                "tip": parsed.get("tip", "")
-            }
+        if parsed and isinstance(parsed, dict) and "cause" in parsed:
+            cause_text = str(parsed.get("cause", "")).strip()
+            suggested = str(parsed.get("suggested_code", "")).strip()
+            tip_text = str(parsed.get("tip", "")).strip()
+            if cause_text:
+                return {
+                    "available": True,
+                    "cause": cause_text,
+                    "suggested_code": suggested,
+                    "tip": tip_text or "Check syntax and declared schema column names."
+                }
 
-        # If JSON couldn't be parsed, use text directly
-        raw = response.text if hasattr(response, 'text') else "Could not parse response"
+        # Fallback if JSON format was incomplete
         return {
             "available": True,
-            "cause": raw[:250],
+            "cause": "Review statement syntax and column types in the pipeline.",
             "suggested_code": "",
-            "tip": "Review your statement syntax and schema columns."
+            "tip": "Check your FlowQL dataset schema and expression types."
         }
 
+    except TimeoutError:
+        return {
+            "available": False,
+            "cause": "AI hints timed out. The compiler verified your code deterministically.",
+            "suggested_code": "",
+            "tip": "Review line diagnostics on the left to locate syntax issues."
+        }
     except Exception as e:
         return {
             "available": False,
             "cause": f"AI hints unavailable ({type(e).__name__}).",
             "suggested_code": "",
-            "tip": "Deterministic error reporting succeeded. Check syntax or schema definitions."
+            "tip": "Deterministic compiler diagnostics succeeded. Check syntax or schema definitions."
         }
 
 
@@ -137,6 +197,7 @@ def review_code(
     """
     Reviews FlowQL source code and generated target code (Python or SQL).
     Returns a short verdict and up to 3 improvement tips.
+    Enforces strict timeout, 1 retry, and strict JSON output validation.
     """
     if not _is_api_key_valid():
         return {
@@ -146,20 +207,20 @@ def review_code(
         }
 
     try:
-        from google import genai
-
-        client = genai.Client(api_key=_get_api_key())
+        # Bound prompt size to prevent sending huge texts
+        bounded_source = source_code[:1200] if source_code else ""
+        bounded_target = target_code[:1500] if target_code else ""
 
         prompt = f"""You are a compiler reviewer assessing a FlowQL program and its generated {target_name} output.
 
 FlowQL Source:
 ```
-{source_code}
+{bounded_source}
 ```
 
 Generated {target_name} Code:
 ```
-{target_code}
+{bounded_target}
 ```
 
 Instructions:
@@ -168,21 +229,19 @@ Instructions:
 3. Output STRICT JSON only with keys "verdict" and "tips" (an array of strings).
 """
 
-        response = client.models.generate_content(
-            model=_get_model_name(),
-            contents=prompt,
-            config={"response_mime_type": "application/json"},
-        )
+        raw_text = _call_gemini_with_retry(prompt, timeout_seconds=GEMINI_TIMEOUT_SECONDS, max_retries=1)
+        parsed = _clean_json_response(raw_text or "")
 
-        parsed = _clean_json_response(response.text if hasattr(response, 'text') else "")
-        if parsed and "verdict" in parsed:
+        if parsed and isinstance(parsed, dict) and "verdict" in parsed:
+            verdict = str(parsed.get("verdict", "")).strip()
             tips = parsed.get("tips", [])
             if not isinstance(tips, list):
                 tips = [str(tips)]
+            clean_tips = [str(t).strip() for t in tips if str(t).strip()][:3]
             return {
                 "available": True,
-                "verdict": parsed.get("verdict", "Valid pipeline"),
-                "tips": tips[:3]
+                "verdict": verdict or "Pipeline successfully compiled and verified.",
+                "tips": clean_tips or ["Verify dataset path and column names before execution."]
             }
 
         return {
@@ -191,9 +250,16 @@ Instructions:
             "tips": ["Ensure CSV file exists at execution runtime.", "Verify column types match source data."]
         }
 
+    except TimeoutError:
+        return {
+            "available": False,
+            "verdict": "AI review timed out. Target code was generated deterministically.",
+            "tips": ["The compiler generated target code successfully without AI review."]
+        }
     except Exception as e:
         return {
             "available": False,
             "verdict": f"AI review unavailable ({type(e).__name__})",
             "tips": ["The compiler generated target code deterministically without AI review."]
         }
+

@@ -13,6 +13,19 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeErrorMarkers = [];
   let activeUpload = null;
 
+  // Concurrency, Caching & Smoothness State
+  let activeCompileAbortController = null;
+  let compileSequenceId = 0;
+  let lastSuccessfulTargetCode = "";
+  let isCompiling = false;
+
+  const aiExplainCache = new Map();
+  let aiExplainSequenceId = 0;
+
+  const aiReviewCache = new Map();
+  let aiReviewSequenceId = 0;
+  let isReviewing = false;
+
   // CSV Upload DOM
   const csvUploadCard = document.getElementById("csvUploadCard");
   const csvCardHeader = document.getElementById("csvCardHeader");
@@ -385,7 +398,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const btnExplain = row.querySelector(".btn-ai-explain");
       btnExplain.addEventListener("click", (e) => {
         e.stopPropagation();
-        requestAiExplanation(err);
+        requestAiExplanation(err, btnExplain);
       });
 
       diagnosticsList.appendChild(row);
@@ -396,12 +409,31 @@ document.addEventListener("DOMContentLoaded", () => {
     diagnosticsCard.classList.toggle("collapsed");
   });
 
-  // 10. AI Error Explanation
-  async function requestAiExplanation(err) {
+  // 10. AI Error Explanation (Button-only, Cached, Sequenced)
+  async function requestAiExplanation(err, triggerBtn = null) {
+    const code = getEditorCode();
+    const cacheKey = `${err.code}:${err.line}:${err.column}:${err.message}:${code}`;
+
     aiExplanationContainer.classList.remove("hidden");
+
+    if (aiExplainCache.has(cacheKey)) {
+      const cached = aiExplainCache.get(cacheKey);
+      renderAiExplanation(cached, err);
+      showSnackbar("Loaded AI explanation from cache", "psychology");
+      return;
+    }
+
+    if (triggerBtn) {
+      triggerBtn.disabled = true;
+      triggerBtn.style.opacity = "0.6";
+      triggerBtn.style.pointerEvents = "none";
+    }
+
     aiCauseText.textContent = "Analyzing error with Google Gemini...";
     aiSnippetSection.classList.add("hidden");
     aiTipText.textContent = "Please wait a moment...";
+
+    const currentSeq = ++aiExplainSequenceId;
 
     try {
       const res = await fetch("/api/explain", {
@@ -409,66 +441,80 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           error: err,
-          source: getEditorCode()
+          source: code
         })
       });
 
+      if (currentSeq !== aiExplainSequenceId) return;
+
       const data = await res.json();
-      aiCauseText.textContent = data.cause || "No cause provided.";
-      aiTipText.textContent = data.tip || "Review syntax rules.";
-
-      if (data.suggested_code) {
-        aiSnippetSection.classList.remove("hidden");
-        aiSuggestedCode.textContent = data.suggested_code;
-        btnApplyFix.onclick = () => {
-          let suggested = (data.suggested_code || "").trim();
-          if (!suggested) return;
-
-          // Strip any markdown code fences if Gemini formatted it as ```...```
-          if (suggested.startsWith("```")) {
-            suggested = suggested.replace(/^```[a-zA-Z]*\r?\n?/, "").replace(/\r?\n?```$/, "").trim();
-          }
-
-          // Case 1: Suggested code is a full program
-          if (suggested.includes("dataset ") || suggested.includes("load ") || suggested.split("\n").length > 3) {
-            setEditorCode(suggested);
-          } 
-          // Case 2: CodeMirror is active and we have an error line number
-          else if (editor && typeof err.line === "number" && err.line > 0) {
-            const lineIndex = Math.max(0, err.line - 1);
-            if (lineIndex < editor.lineCount()) {
-              const currentLineLength = editor.getLine(lineIndex).length;
-              editor.replaceRange(
-                suggested,
-                { line: lineIndex, ch: 0 },
-                { line: lineIndex, ch: currentLineLength }
-              );
-            } else {
-              setEditorCode(suggested);
-            }
-          } 
-          // Case 3: Fallback textarea or single line replacement
-          else {
-            const currentFull = getEditorCode();
-            const lines = currentFull.split("\n");
-            const lineIndex = Math.max(0, (err.line || 1) - 1);
-            if (lineIndex < lines.length) {
-              lines[lineIndex] = suggested;
-              setEditorCode(lines.join("\n"));
-            } else {
-              setEditorCode(suggested);
-            }
-          }
-
-          compile(true);
-          showSnackbar("Applied suggested fix to editor", "auto_fix_high");
-        };
-      } else {
-        aiSnippetSection.classList.add("hidden");
-      }
+      aiExplainCache.set(cacheKey, data);
+      renderAiExplanation(data, err);
     } catch (e) {
+      if (currentSeq !== aiExplainSequenceId) return;
       aiCauseText.textContent = "AI hints unavailable: could not contact server.";
       aiTipText.textContent = "Compiler deterministic checks succeeded.";
+    } finally {
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.style.opacity = "";
+        triggerBtn.style.pointerEvents = "";
+      }
+    }
+  }
+
+  function renderAiExplanation(data, err) {
+    aiCauseText.textContent = data.cause || "No cause provided.";
+    aiTipText.textContent = data.tip || "Review syntax rules.";
+
+    if (data.suggested_code) {
+      aiSnippetSection.classList.remove("hidden");
+      aiSuggestedCode.textContent = data.suggested_code;
+      btnApplyFix.onclick = () => {
+        let suggested = (data.suggested_code || "").trim();
+        if (!suggested) return;
+
+        // Strip markdown code fences if present
+        if (suggested.startsWith("```")) {
+          suggested = suggested.replace(/^```[a-zA-Z]*\r?\n?/, "").replace(/\r?\n?```$/, "").trim();
+        }
+
+        // Case 1: Suggested code is a full program
+        if (suggested.includes("dataset ") || suggested.includes("load ") || suggested.split("\n").length > 3) {
+          setEditorCode(suggested);
+        } 
+        // Case 2: CodeMirror is active and we have an error line number
+        else if (editor && typeof err.line === "number" && err.line > 0) {
+          const lineIndex = Math.max(0, err.line - 1);
+          if (lineIndex < editor.lineCount()) {
+            const currentLineLength = editor.getLine(lineIndex).length;
+            editor.replaceRange(
+              suggested,
+              { line: lineIndex, ch: 0 },
+              { line: lineIndex, ch: currentLineLength }
+            );
+          } else {
+            setEditorCode(suggested);
+          }
+        } 
+        // Case 3: Fallback textarea or single line replacement
+        else {
+          const currentFull = getEditorCode();
+          const lines = currentFull.split("\n");
+          const lineIndex = Math.max(0, (err.line || 1) - 1);
+          if (lineIndex < lines.length) {
+            lines[lineIndex] = suggested;
+            setEditorCode(lines.join("\n"));
+          } else {
+            setEditorCode(suggested);
+          }
+        }
+
+        compile(true);
+        showSnackbar("Applied suggested fix to editor", "auto_fix_high");
+      };
+    } else {
+      aiSnippetSection.classList.add("hidden");
     }
   }
 
@@ -476,19 +522,37 @@ document.addEventListener("DOMContentLoaded", () => {
     aiExplanationContainer.classList.add("hidden");
   });
 
-  // 11. AI Code Review
+  // 11. AI Code Review (Button-only, Cached, Sequenced)
   btnAiReview.addEventListener("click", async () => {
+    if (isReviewing) return;
     const code = getEditorCode();
     if (!currentArtifacts || !currentArtifacts.target_code) {
       showSnackbar("Please compile a valid pipeline first", "info");
       return;
     }
 
+    const reviewCacheKey = `${currentTarget}:${code}:${currentArtifacts.target_code}`;
+
     aiReviewCard.classList.remove("hidden");
+    document.querySelector('.tab-btn[data-tab="tab-output"]').click();
+
+    if (aiReviewCache.has(reviewCacheKey)) {
+      const cached = aiReviewCache.get(reviewCacheKey);
+      renderAiReview(cached);
+      showSnackbar("Loaded AI review from cache", "auto_awesome");
+      return;
+    }
+
+    isReviewing = true;
+    btnAiReview.disabled = true;
+    const reviewBtnLabel = btnAiReview.querySelector("span:not(.material-symbols-outlined)");
+    const prevReviewText = reviewBtnLabel ? reviewBtnLabel.textContent : "AI Review";
+    if (reviewBtnLabel) reviewBtnLabel.textContent = "Reviewing...";
+
     aiReviewVerdict.textContent = "Requesting Gemini review...";
     aiReviewTips.innerHTML = "<li>Analyzing pipeline structure...</li>";
-    // Switch to output tab
-    document.querySelector('.tab-btn[data-tab="tab-output"]').click();
+
+    const currentSeq = ++aiReviewSequenceId;
 
     try {
       const res = await fetch("/api/review", {
@@ -500,34 +564,50 @@ document.addEventListener("DOMContentLoaded", () => {
           target_name: currentTarget.toUpperCase()
         })
       });
+
+      if (currentSeq !== aiReviewSequenceId) return;
+
       if (!res.ok) {
         throw new Error(`Server returned status ${res.status}`);
       }
       const data = await res.json();
-      aiReviewVerdict.textContent = data.verdict || "Review complete.";
-      aiReviewTips.innerHTML = "";
-      const tipsList = Array.isArray(data.tips) ? data.tips : [data.tips || "No specific tips."];
-      tipsList.forEach((tip) => {
-        const li = document.createElement("li");
-        li.textContent = tip;
-        aiReviewTips.appendChild(li);
-      });
+      aiReviewCache.set(reviewCacheKey, data);
+      renderAiReview(data);
+
       if (data.available) {
         showSnackbar("AI Code Review completed", "auto_awesome");
       } else {
         showSnackbar("AI review unavailable", "info");
       }
     } catch (e) {
+      if (currentSeq !== aiReviewSequenceId) return;
       aiReviewVerdict.textContent = "Could not reach FlowQL server.";
       aiReviewTips.innerHTML = "<li>Make sure the server is running (<code>uvicorn server:app --reload</code>).</li><li>Check your connection to localhost:8000.</li>";
+    } finally {
+      if (currentSeq === aiReviewSequenceId) {
+        isReviewing = false;
+        btnAiReview.disabled = false;
+        if (reviewBtnLabel) reviewBtnLabel.textContent = prevReviewText;
+      }
     }
   });
+
+  function renderAiReview(data) {
+    aiReviewVerdict.textContent = data.verdict || "Review complete.";
+    aiReviewTips.innerHTML = "";
+    const tipsList = Array.isArray(data.tips) ? data.tips : [data.tips || "No specific tips."];
+    tipsList.forEach((tip) => {
+      const li = document.createElement("li");
+      li.textContent = tip;
+      aiReviewTips.appendChild(li);
+    });
+  }
 
   btnCloseAiReview.addEventListener("click", () => {
     aiReviewCard.classList.add("hidden");
   });
 
-  // 12. Main Compiler Execution
+  // 12. Main Compiler Execution (Debounced, Abortable, Output-Retaining)
   async function compile(showToast = true) {
     const source = getEditorCode().trim();
     if (!source) {
@@ -537,6 +617,19 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    // Cancel prior in-flight compile request to prevent race conditions
+    if (activeCompileAbortController) {
+      activeCompileAbortController.abort();
+    }
+    activeCompileAbortController = new AbortController();
+    const currentSeq = ++compileSequenceId;
+
+    isCompiling = true;
+    btnCompile.disabled = true;
+    const compileBtnLabel = btnCompile.querySelector("span:not(.material-symbols-outlined)");
+    const prevCompileText = compileBtnLabel ? compileBtnLabel.textContent : "Compile";
+    if (compileBtnLabel) compileBtnLabel.textContent = "Compiling...";
+
     emptyState.classList.add("hidden");
     loadingShimmer.classList.remove("hidden");
 
@@ -544,6 +637,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/compile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: activeCompileAbortController.signal,
         body: JSON.stringify({
           source: source,
           target: currentTarget,
@@ -552,19 +646,30 @@ document.addEventListener("DOMContentLoaded", () => {
         })
       });
 
+      if (currentSeq !== compileSequenceId) return;
+
       const data = await res.json();
       currentArtifacts = data;
 
       // Update Diagnostics
       updateDiagnostics(data.errors || []);
 
-      // Output Code
-      if (data.target_code) {
+      // Output Code & Preservation of last successful target code
+      if (data.success && data.target_code) {
+        lastSuccessfulTargetCode = data.target_code;
         outputCode.textContent = data.target_code;
       } else {
-        outputCode.textContent = data.errors && data.errors.length > 0 
-          ? `# Compilation failed with ${data.errors.length} error(s).\n# See diagnostics panel on the left for details.` 
-          : "# No target code generated.";
+        if (lastSuccessfulTargetCode) {
+          const errList = (data.errors || []).map((e) => `[${e.code}] ${e.message}`).join("; ");
+          outputCode.textContent = `# ⚠️ Compilation Error — Retaining last successful target output:\n` +
+            (errList ? `# Diagnostics: ${errList}\n` : "") +
+            `# ---------------------------------------------------------------------\n\n` +
+            lastSuccessfulTargetCode;
+        } else {
+          outputCode.textContent = data.errors && data.errors.length > 0 
+            ? `# Compilation failed with ${data.errors.length} error(s).\n# See diagnostics panel on the left for details.` 
+            : "# No target code generated.";
+        }
       }
 
       // Optimization Notes
@@ -592,10 +697,20 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
     } catch (e) {
+      if (e.name === "AbortError") {
+        // Request aborted due to newer compilation trigger; ignore
+        return;
+      }
+      if (currentSeq !== compileSequenceId) return;
       console.error(e);
       showSnackbar("Compiler error: could not connect to server", "error");
     } finally {
-      loadingShimmer.classList.add("hidden");
+      if (currentSeq === compileSequenceId) {
+        isCompiling = false;
+        btnCompile.disabled = false;
+        if (compileBtnLabel) compileBtnLabel.textContent = prevCompileText;
+        loadingShimmer.classList.add("hidden");
+      }
     }
   }
 

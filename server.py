@@ -6,18 +6,23 @@ while serving the static Google Material 3 frontend directly.
 Single execution command: uvicorn server:app --reload
 """
 import os
+import time
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from dslc.compiler import compile_flowql
 from dslc.ai import explain_error, review_code
 from dslc.csv_utils import CSVUploadManager
 
 from fastapi.middleware.cors import CORSMiddleware
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("flowql.server")
 
 app = FastAPI(
     title="FlowQL Studio",
@@ -33,27 +38,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_process_time_and_log(request: Request, call_next):
+    """Measures request execution time, attaches header, and logs request lifecycle."""
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    response.headers["X-Process-Time-Ms"] = f"{duration_ms:.2f}"
+    logger.info(f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms:.2f}ms)")
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Sanitizes unexpected server errors so stack traces are never exposed to the client."""
+    logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": "An internal server error occurred while processing the request.",
+            "code": "INTERNAL_SERVER_ERROR"
+        }
+    )
+
+
 # Shared upload manager instance
 upload_manager = CSVUploadManager()
 
-# Request Models
+# Request Models with payload size boundaries
 class CompileRequest(BaseModel):
-    source: str
-    target: str = "python"
+    source: str = Field(..., max_length=256 * 1024, description="FlowQL source code (max 256KB)")
+    target: str = Field(default="python", max_length=32)
     optimize: bool = True
-    upload_id: Optional[str] = None
+    upload_id: Optional[str] = Field(default=None, max_length=128)
     file_mappings: Optional[Dict[str, str]] = None
 
 
 class ExplainRequest(BaseModel):
     error: Dict[str, Any]
-    source: str
+    source: str = Field(..., max_length=256 * 1024)
 
 
 class ReviewRequest(BaseModel):
-    source: str
-    target_code: str
-    target_name: str = "Python"
+    source: str = Field(..., max_length=256 * 1024)
+    target_code: str = Field(..., max_length=512 * 1024)
+    target_name: str = Field(default="Python", max_length=32)
 
 
 @app.get("/health")
@@ -122,10 +153,11 @@ async def api_list_uploads():
 
 
 @app.post("/api/compile")
-async def api_compile(req: CompileRequest):
+def api_compile(req: CompileRequest):
     """
     Runs full compiler pipeline: Lexer -> Parser -> Semantic -> IR -> Optimizer -> CodeGen.
     Supports resolving uploaded CSV datasets via upload_id or file_mappings.
+    Runs in thread pool to avoid blocking the asyncio event loop.
     """
     res = compile_flowql(
         source=req.source,
@@ -141,11 +173,12 @@ async def api_compile(req: CompileRequest):
 
 
 @app.post("/api/explain")
-async def api_explain(req: ExplainRequest):
+def api_explain(req: ExplainRequest):
     """
     Advisory error explanation with Google Gemini.
     Returns plain-English root cause, suggested fix snippet, and practical tip.
     Gracefully degrades if API key is not configured or offline.
+    Runs in thread pool to avoid blocking the asyncio event loop.
     """
     explanation = explain_error(
         error_dict=req.error,
@@ -155,10 +188,11 @@ async def api_explain(req: ExplainRequest):
 
 
 @app.post("/api/review")
-async def api_review(req: ReviewRequest):
+def api_review(req: ReviewRequest):
     """
     Advisory code review with Google Gemini.
     Returns verdict and up to 3 optimization/safety tips.
+    Runs in thread pool to avoid blocking the asyncio event loop.
     """
     review = review_code(
         source_code=req.source,

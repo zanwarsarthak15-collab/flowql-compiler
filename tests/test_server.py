@@ -83,7 +83,8 @@ def test_server_compile_error():
     assert data["errors"][0]["code"] == "E101"
 
 
-def test_server_explain_fallback():
+def test_server_explain_fallback(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     payload = {
         "error": {
             "code": "E101",

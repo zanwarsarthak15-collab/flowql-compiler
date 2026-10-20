@@ -376,26 +376,35 @@ def p_error(p):
         ))
 
 
+# Compile master PLY parser once at module load (reused across all requests)
+_shared_yacc_parser = yacc.yacc(debug=False, write_tables=False)
+
+
 class FlowQLParser:
     """PLY-based parser wrapper that tracks syntax errors and constructs Program AST."""
 
     def __init__(self):
-        self.parser = yacc.yacc(debug=False, write_tables=False)
+        self.parser = _shared_yacc_parser
 
-    def parse(self, source: str) -> Tuple[Optional[Program], List[CompileError]]:
+    def parse(self, source: str, lex_errors: Optional[List[CompileError]] = None) -> Tuple[Optional[Program], List[CompileError]]:
         global _current_errors, _current_source
         _current_errors = []
         _current_source = source
 
         lexer_instance = FlowQLLexer()
-        # Pre-tokenize to check lexical errors
-        _, lex_errors = lexer_instance.tokenize(source)
-        _current_errors.extend(lex_errors)
 
-        # Reset lexer for parser
+        # If lexical errors were already discovered by the lexer pass, reuse them
+        if lex_errors is not None:
+            _current_errors.extend(lex_errors)
+        else:
+            _, scanned_lex_errors = lexer_instance.tokenize(source)
+            _current_errors.extend(scanned_lex_errors)
+
+        # Reset lexer input for PLY parser
         lexer_instance.lexer.lineno = 1
         lexer_instance.lexer.errors = []
         lexer_instance.lexer.input(source)
 
         ast = self.parser.parse(source, lexer=lexer_instance.lexer)
         return ast, list(_current_errors)
+

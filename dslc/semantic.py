@@ -152,9 +152,20 @@ class SemanticAnalyzer:
 
         # E101: Check source table exists
         if stmt.source_table not in self.tables:
+            avail = sorted(list(self.tables.keys()))
+            msg = f"Undefined table '{stmt.source_table}'"
+            if avail:
+                import difflib
+                matches = difflib.get_close_matches(stmt.source_table, avail, n=1, cutoff=0.5)
+                if matches:
+                    msg += f". Did you mean '{matches[0]}'?"
+                else:
+                    msg += f". Available tables: {', '.join(avail)}"
+            else:
+                msg += ". No dataset or table has been declared yet. Use `dataset <name>(...) = load \"<file.csv>\";`"
             self._add_error(
                 E101_UNDEFINED_NAME,
-                f"Undefined table '{stmt.source_table}'",
+                msg,
                 stmt.line,
                 stmt.column
             )
@@ -263,9 +274,18 @@ class SemanticAnalyzer:
                     stmt.column
                 )
             else:
+                avail = sorted(list(self.tables.keys()))
+                msg = f"Print of undefined table '{stmt.table_name}'"
+                if avail:
+                    import difflib
+                    matches = difflib.get_close_matches(stmt.table_name, avail, n=1, cutoff=0.5)
+                    if matches:
+                        msg += f". Did you mean '{matches[0]}'?"
+                    else:
+                        msg += f". Available tables: {', '.join(avail)}"
                 self._add_error(
                     E108_INVALID_PRINT,
-                    f"Print of undefined table '{stmt.table_name}'",
+                    msg,
                     stmt.line,
                     stmt.column
                 )
@@ -286,16 +306,32 @@ class SemanticAnalyzer:
                 return self.variables[expr.name]
             # If not found
             if current_schema is not None:
+                avail_cols = sorted(list(current_schema.keys()))
+                msg = f"Unknown identifier '{expr.name}' in expression (not in schema or let variables)"
+                if avail_cols:
+                    import difflib
+                    matches = difflib.get_close_matches(expr.name, avail_cols, n=1, cutoff=0.5)
+                    if matches:
+                        msg += f". Did you mean column '{matches[0]}'?"
+                    else:
+                        msg += f". Available columns: {', '.join(avail_cols)}"
                 self._add_error(
                     E103_UNKNOWN_COLUMN,
-                    f"Unknown identifier '{expr.name}' in expression (not in schema or let variables)",
+                    msg,
                     expr.line,
                     expr.column
                 )
             else:
+                avail_vars = sorted(list(self.variables.keys()))
+                msg = f"Undefined variable '{expr.name}'"
+                if avail_vars:
+                    import difflib
+                    matches = difflib.get_close_matches(expr.name, avail_vars, n=1, cutoff=0.5)
+                    if matches:
+                        msg += f". Did you mean '{matches[0]}'?"
                 self._add_error(
                     E101_UNDEFINED_NAME,
-                    f"Undefined variable '{expr.name}'",
+                    msg,
                     expr.line,
                     expr.column
                 )

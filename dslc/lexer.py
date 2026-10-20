@@ -175,11 +175,15 @@ def t_error(t):
     t.lexer.skip(1)
 
 
+# Master lexer compiled once at module load
+_master_lexer = lex.lex(debug=False)
+
+
 class FlowQLLexer:
     """Wrapper around PLY lexer managing error accumulation and column tracking."""
 
     def __init__(self):
-        self.lexer = lex.lex(debug=False)
+        self.lexer = _master_lexer.clone()
         self.lexer.errors = []
 
     def tokenize(self, source: str) -> Tuple[List[lex.LexToken], List[CompileError]]:
